@@ -27,31 +27,44 @@ A lightweight, native C++ Windows 11 Shell Extension that integrates **7-Zip** d
     - `Compress to "<FileName>.7z" and email`
     - `Compress to "<FileName>.zip" and email`
     - `CRC SHA` checksum calculation
-- **Native COM Performance**: Implements Microsoft's modern `IExplorerCommand` and `IEnumExplorerCommand` interfaces in native C++ with negligible latency.
-- **Safe & Clean**: Uses Windows Sparse MSIX Package identity (`AllowExternalContent`), making installation and uninstallation fast and reversible with no registry corruption.
+- **Instantaneous Native Speed**: Fast string caching, zero-overhead selection probing, and root-only icon parsing ensures sub-millisecond context menu render times.
+- **Dynamic 7-Zip Auto-Discovery**: Automatically locates your 7-Zip installation from the Windows Registry or standard program files directories (`C:\Program Files\7-Zip`, `C:\Program Files (x86)\7-Zip`, etc.).
+- **Safe & Clean**: Uses Windows Sparse MSIX Package identity (`AllowExternalContent`), making installation and uninstallation fast and completely reversible with no registry clutter.
 
 ---
 
 ## Requirements
 
 - **Windows 11** (64-bit)
-- **7-Zip** installed on your system (typically `C:\Program Files\7-Zip`)
+- **7-Zip** installed on your system (any path)
 - **PowerShell 5.1+**
 
 ---
 
-## Quick Start (Installation)
+## Quick Start (Installation for Any User)
 
-1. Open PowerShell and navigate to this folder:
+1. Clone or download this repository:
    ```powershell
-   cd c:\Users\brian\Documents\antigravity\7zip_helper
+   git clone https://github.com/brianodeen/7zip_helper.git
+   cd 7zip_helper
    ```
-2. Run the installation script:
+2. Open PowerShell as **Administrator** and run:
    ```powershell
    .\install.ps1
    ```
-   *The script will compile the DLL (if needed), create a local package signature, register the Sparse MSIX package, and restart Windows Explorer.*
-3. Right-click any file or folder in File Explorer to verify that 7-Zip is now in the top-level context menu!
+   *The script will automatically trust the package certificate, register the Sparse MSIX package, and refresh Windows Explorer.*
+3. Right-click any file or folder in File Explorer to verify that 7-Zip is now in the top-level menu!
+
+---
+
+## Rebuilding from Source (Developers)
+
+If you modify the C++ source code in `src/` and want to recompile:
+```powershell
+.\build.ps1
+.\install.ps1 -Rebuild
+```
+*(Requires Visual Studio 2019/2022/2026 with C++ Desktop Development tools and Windows 10/11 SDK).*
 
 ---
 

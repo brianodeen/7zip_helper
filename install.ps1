@@ -1,6 +1,8 @@
 # install.ps1 - Packages and installs the 7-Zip Modern Context Menu Sparse Package
 [CmdletBinding()]
-param ()
+param (
+    [switch]$Rebuild
+)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -31,30 +33,12 @@ Write-Host "===============================================" -ForegroundColor Cy
 Write-Host " Installing 7-Zip Modern Context Menu Extension" -ForegroundColor Cyan
 Write-Host "===============================================" -ForegroundColor Cyan
 
-# 1. Check if binaries exist; if not, build them
 $packageDir = Join-Path $ScriptDir "package"
 $dllPath = Join-Path $packageDir "SevenZipContextMenu.dll"
 $exePath = Join-Path $packageDir "SevenZipContextMenu.exe"
-$manifestPath = Join-Path $packageDir "AppxManifest.xml"
+$msixPath = Join-Path $ScriptDir "SevenZipContextMenu.msix"
 
-if ((-not (Test-Path $dllPath)) -or (-not (Test-Path $exePath))) {
-    Write-Host "Binaries not found in package folder. Running build.ps1..." -ForegroundColor Yellow
-    & (Join-Path $ScriptDir "build.ps1")
-}
-
-if (-not (Test-Path $dllPath)) {
-    throw "Failed to locate SevenZipContextMenu.dll at: $dllPath"
-}
-
-# 2. Check 7-Zip installation
-$sevenZipExe = "C:\Program Files\7-Zip\7zG.exe"
-if (-not (Test-Path $sevenZipExe)) {
-    Write-Warning "7-Zip not found at default location ($sevenZipExe). Ensure 7-Zip is installed."
-} else {
-    Write-Host "Found 7-Zip at: $sevenZipExe" -ForegroundColor Green
-}
-
-# 3. Locate makeappx.exe and signtool.exe
+# 1. Locate Windows SDK (optional if pre-built MSIX is present)
 $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
 $sdkVersions = Get-ChildItem $sdkRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
 $makeappx = $null
@@ -70,62 +54,73 @@ foreach ($ver in $sdkVersions) {
     }
 }
 
-if (-not $makeappx -or -not $signtool) {
-    throw "Windows SDK tools (makeappx.exe / signtool.exe) not found."
+# 2. Check if rebuilding from source is requested or necessary
+$needsBuild = $Rebuild -or (-not (Test-Path $dllPath)) -or (-not (Test-Path $exePath))
+if ($needsBuild) {
+    Write-Host "Building C++ binaries from source..." -ForegroundColor Yellow
+    & (Join-Path $ScriptDir "build.ps1")
+}
+
+$needsPack = $needsBuild -or (-not (Test-Path $msixPath))
+if ($needsPack) {
+    if (-not $makeappx -or -not $signtool) {
+        throw "Windows SDK tools (makeappx.exe / signtool.exe) not found to package MSIX. Please install the Windows SDK."
+    }
+
+    # Generate or find Self-Signed Certificate
+    $certSubject = "CN=SevenZipContextMenu"
+    $cert = Get-ChildItem "Cert:\CurrentUser\My" | Where-Object { $_.Subject -eq $certSubject } | Select-Object -First 1
+
+    if (-not $cert) {
+        Write-Host "Creating self-signed certificate..." -ForegroundColor Yellow
+        $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject $certSubject `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "7-Zip Context Menu Test Certificate" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
+    }
+
+    if (Test-Path $msixPath) {
+        Remove-Item $msixPath -Force
+    }
+
+    Write-Host "Packing Sparse MSIX package..." -ForegroundColor Yellow
+    & $makeappx pack /d "$packageDir" /p "$msixPath" /nv /o
+    if ($LASTEXITCODE -ne 0) {
+        throw "makeappx pack failed with exit code $LASTEXITCODE"
+    }
+
+    Write-Host "Signing Sparse MSIX package..." -ForegroundColor Yellow
+    & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint /v "$msixPath"
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool sign failed with exit code $LASTEXITCODE"
+    }
+}
+
+# 3. Trust the signer certificate in LocalMachine\TrustedPeople
+$sig = Get-AuthenticodeSignature $msixPath
+if ($sig.SignerCertificate) {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("TrustedPeople", "LocalMachine")
+    $store.Open("ReadWrite")
+    $store.Add($sig.SignerCertificate)
+    $store.Close()
+    Write-Host "Signer certificate trusted in LocalMachine\TrustedPeople." -ForegroundColor Green
 }
 
 # 4. Remove previous registration if present
 $existing = Get-AppxPackage -Name "SevenZipContextMenu" -AllUsers -ErrorAction SilentlyContinue
 if ($existing) {
-    Write-Host "Removing existing package registration..." -ForegroundColor Yellow
+    Write-Host "Removing previous package registration..." -ForegroundColor Yellow
     Remove-AppxPackage -Package $existing.PackageFullName -AllUsers -ErrorAction SilentlyContinue
 }
 
-# 5. Create / Retrieve Self-Signed Certificate
-$certSubject = "CN=SevenZipContextMenu"
-$cert = Get-ChildItem "Cert:\CurrentUser\My" | Where-Object { $_.Subject -eq $certSubject } | Select-Object -First 1
-
-if (-not $cert) {
-    Write-Host "Creating self-signed certificate for Sparse Package signing..." -ForegroundColor Yellow
-    $cert = New-SelfSignedCertificate `
-        -Type Custom `
-        -Subject $certSubject `
-        -KeyUsage DigitalSignature `
-        -FriendlyName "7-Zip Context Menu Test Certificate" `
-        -CertStoreLocation "Cert:\CurrentUser\My" `
-        -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
-}
-
-# Export and import certificate into LocalMachine\TrustedPeople
-$cerPath = Join-Path $env:TEMP "SevenZipContextMenu.cer"
-Export-Certificate -Cert $cert -FilePath $cerPath -Force | Out-Null
-Import-Certificate -FilePath $cerPath -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
-Write-Host "Certificate trusted in LocalMachine\TrustedPeople." -ForegroundColor Green
-
-# 6. Package MSIX
-$msixPath = Join-Path $ScriptDir "SevenZipContextMenu.msix"
-if (Test-Path $msixPath) {
-    Remove-Item $msixPath -Force
-}
-
-Write-Host "Packing Sparse MSIX package..." -ForegroundColor Yellow
-& $makeappx pack /d "$packageDir" /p "$msixPath" /nv /o
-if ($LASTEXITCODE -ne 0) {
-    throw "makeappx pack failed with exit code $LASTEXITCODE"
-}
-
-# 7. Sign MSIX
-Write-Host "Signing Sparse MSIX package..." -ForegroundColor Yellow
-& $signtool sign /fd SHA256 /sha1 $cert.Thumbprint /v "$msixPath"
-if ($LASTEXITCODE -ne 0) {
-    throw "signtool sign failed with exit code $LASTEXITCODE"
-}
-
-# 8. Install Signed Sparse MSIX with ExternalLocation
+# 5. Install Signed Sparse MSIX with ExternalLocation
 Write-Host "Installing Signed Sparse MSIX with ExternalLocation..." -ForegroundColor Yellow
 Add-AppxPackage -Path "$msixPath" -ExternalLocation "$packageDir"
 
-# 9. Verify installation
+# 6. Verify installation
 $check = Get-AppxPackage -Name "SevenZipContextMenu" -ErrorAction SilentlyContinue
 if ($check) {
     Write-Host "===============================================" -ForegroundColor Green

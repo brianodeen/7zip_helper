@@ -13,10 +13,5 @@ out/
 *.pdb
 *.tmp
 
-# Generated packages
-*.msix
+# Temporary cert files
 *.cer
-
-# Built binaries (rebuilt by build.ps1 / install.ps1)
-package/*.dll
-package/*.exe
