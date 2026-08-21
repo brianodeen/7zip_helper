@@ -38,7 +38,7 @@ namespace SevenZipHelper
         return false;
     }
 
-    std::wstring GetSevenZipDirectory()
+    static std::wstring FindSevenZipDirectoryInternal()
     {
         std::wstring path;
         if (ReadRegistryPath(HKEY_CURRENT_USER, L"Software\\7-Zip", path) && PathFileExistsW((path + L"\\7zG.exe").c_str()))
@@ -54,7 +54,6 @@ namespace SevenZipHelper
             return path;
         }
 
-        // Standard default paths
         if (PathFileExistsW(L"C:\\Program Files\\7-Zip\\7zG.exe"))
         {
             return L"C:\\Program Files\\7-Zip";
@@ -67,19 +66,33 @@ namespace SevenZipHelper
         return L"C:\\Program Files\\7-Zip";
     }
 
-    std::wstring Get7zGPath()
+    const std::wstring& GetSevenZipDirectory()
     {
-        return GetSevenZipDirectory() + L"\\7zG.exe";
+        static const std::wstring s_sevenZipDir = FindSevenZipDirectoryInternal();
+        return s_sevenZipDir;
     }
 
-    std::wstring Get7zFMPath()
+    const std::wstring& Get7zGPath()
     {
-        return GetSevenZipDirectory() + L"\\7zFM.exe";
+        static const std::wstring s_7zGPath = GetSevenZipDirectory() + L"\\7zG.exe";
+        return s_7zGPath;
+    }
+
+    const std::wstring& Get7zFMPath()
+    {
+        static const std::wstring s_7zFMPath = GetSevenZipDirectory() + L"\\7zFM.exe";
+        return s_7zFMPath;
+    }
+
+    const std::wstring& GetRootIconPath()
+    {
+        static const std::wstring s_iconPath = Get7zFMPath() + L",0";
+        return s_iconPath;
     }
 
     bool IsArchiveFile(const std::wstring& path)
     {
-        if (path.empty() || PathIsDirectoryW(path.c_str()))
+        if (path.empty())
         {
             return false;
         }
@@ -104,31 +117,6 @@ namespace SevenZipHelper
         return false;
     }
 
-    bool AnyIsArchive(const std::vector<std::wstring>& paths)
-    {
-        for (const auto& p : paths)
-        {
-            if (IsArchiveFile(p))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    bool AllAreArchives(const std::vector<std::wstring>& paths)
-    {
-        if (paths.empty()) return false;
-        for (const auto& p : paths)
-        {
-            if (!IsArchiveFile(p))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
     std::wstring GetFileName(const std::wstring& path)
     {
         if (path.empty()) return L"";
@@ -145,7 +133,6 @@ namespace SevenZipHelper
         std::wstring fileName = GetFileName(path);
         if (fileName.empty()) return L"";
 
-        // Remove compound extensions like .tar.gz, .tar.bz2
         std::wstring lower = ToLower(fileName);
         const wchar_t* compoundExts[] = { L".tar.gz", L".tar.bz2", L".tar.xz", L".tar.z" };
         for (const auto& cExt : compoundExts)
@@ -176,36 +163,49 @@ namespace SevenZipHelper
         return path.substr(0, lastSlash);
     }
 
-    std::wstring GetDefaultArchiveBaseName(const std::vector<std::wstring>& paths)
+    SelectionInfo GetFastSelectionInfo(IShellItemArray* psiItemArray)
     {
-        if (paths.empty())
-        {
-            return L"Archive";
-        }
-        if (paths.size() == 1)
-        {
-            return GetFileNameWithoutExtension(paths[0]);
-        }
-        // Multiple items: use parent folder name
-        std::wstring parentDir = GetParentDirectory(paths[0]);
-        std::wstring parentName = GetFileName(parentDir);
-        if (!parentName.empty())
-        {
-            return parentName;
-        }
-        return L"Archive";
-    }
+        SelectionInfo info;
+        if (!psiItemArray) return info;
 
-    std::wstring GetDefaultDestinationFolder(const std::vector<std::wstring>& paths)
-    {
-        if (paths.empty()) return L"";
-        std::wstring parentDir = GetParentDirectory(paths[0]);
-        std::wstring baseName = GetFileNameWithoutExtension(paths[0]);
-        if (!parentDir.empty())
+        if (FAILED(psiItemArray->GetCount(&info.count)) || info.count == 0)
         {
-            return parentDir + L"\\" + baseName;
+            info.baseName = L"Archive";
+            return info;
         }
-        return baseName;
+
+        IShellItem* pItem = nullptr;
+        if (SUCCEEDED(psiItemArray->GetItemAt(0, &pItem)) && pItem)
+        {
+            LPWSTR pszPath = nullptr;
+            if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath)) && pszPath)
+            {
+                info.firstItemPath = pszPath;
+                CoTaskMemFree(pszPath);
+            }
+            pItem->Release();
+        }
+
+        if (!info.firstItemPath.empty())
+        {
+            info.isArchive = IsArchiveFile(info.firstItemPath);
+            if (info.count == 1)
+            {
+                info.baseName = GetFileNameWithoutExtension(info.firstItemPath);
+            }
+            else
+            {
+                std::wstring parentDir = GetParentDirectory(info.firstItemPath);
+                info.baseName = GetFileName(parentDir);
+            }
+        }
+
+        if (info.baseName.empty())
+        {
+            info.baseName = L"Archive";
+        }
+
+        return info;
     }
 
     std::vector<std::wstring> GetPathsFromShellItemArray(IShellItemArray* psiItemArray)
@@ -258,7 +258,6 @@ namespace SevenZipHelper
                 {
                     std::vector<char> utf8Buf(len);
                     WideCharToMultiByte(CP_UTF8, 0, p.c_str(), -1, utf8Buf.data(), len, nullptr, nullptr);
-                    // Write string without trailing null, then newline
                     outFile.write(utf8Buf.data(), len - 1);
                     outFile.write("\r\n", 2);
                 }

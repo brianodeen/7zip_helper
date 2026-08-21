@@ -6,7 +6,13 @@
 #pragma comment(lib, "shlwapi.lib")
 
 // Helper to duplicate wide string to COM task memory
-static HRESULT AllocString(const std::wstring& str, LPWSTR* ppsz)
+static inline HRESULT AllocString(const wchar_t* str, LPWSTR* ppsz)
+{
+    if (!ppsz) return E_POINTER;
+    return SHStrDupW(str, ppsz);
+}
+
+static inline HRESULT AllocString(const std::wstring& str, LPWSTR* ppsz)
 {
     if (!ppsz) return E_POINTER;
     return SHStrDupW(str.c_str(), ppsz);
@@ -51,9 +57,6 @@ IFACEMETHODIMP_(ULONG) SevenZipSubCommand::Release()
 
 IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWSTR* ppszName)
 {
-    std::vector<std::wstring> paths = SevenZipHelper::GetPathsFromShellItemArray(psiItemArray);
-    std::wstring baseName = SevenZipHelper::GetDefaultArchiveBaseName(paths);
-
     switch (m_action)
     {
     case ACTION_OPEN:
@@ -63,7 +66,10 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
     case ACTION_EXTRACT_HERE:
         return AllocString(L"Extract Here", ppszName);
     case ACTION_EXTRACT_TO_FOLDER:
-        return AllocString(L"Extract to \"" + baseName + L"\\\"", ppszName);
+    {
+        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        return AllocString(L"Extract to \"" + info.baseName + L"\\\"", ppszName);
+    }
     case ACTION_TEST:
         return AllocString(L"Test archive", ppszName);
     case ACTION_ADD_DIALOG:
@@ -71,13 +77,25 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
     case ACTION_COMPRESS_EMAIL_DIALOG:
         return AllocString(L"Compress and email...", ppszName);
     case ACTION_ADD_7Z:
-        return AllocString(L"Add to \"" + baseName + L".7z\"", ppszName);
+    {
+        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        return AllocString(L"Add to \"" + info.baseName + L".7z\"", ppszName);
+    }
     case ACTION_ADD_ZIP:
-        return AllocString(L"Add to \"" + baseName + L".zip\"", ppszName);
+    {
+        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        return AllocString(L"Add to \"" + info.baseName + L".zip\"", ppszName);
+    }
     case ACTION_COMPRESS_7Z_EMAIL:
-        return AllocString(L"Compress to \"" + baseName + L".7z\" and email", ppszName);
+    {
+        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        return AllocString(L"Compress to \"" + info.baseName + L".7z\" and email", ppszName);
+    }
     case ACTION_COMPRESS_ZIP_EMAIL:
-        return AllocString(L"Compress to \"" + baseName + L".zip\" and email", ppszName);
+    {
+        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        return AllocString(L"Compress to \"" + info.baseName + L".zip\" and email", ppszName);
+    }
     case ACTION_CRC_SHA_ALL:
         return AllocString(L"CRC SHA (*)", ppszName);
     case ACTION_CRC_SHA_256:
@@ -91,19 +109,19 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
 
 IFACEMETHODIMP SevenZipSubCommand::GetIcon(IShellItemArray* psiItemArray, LPWSTR* ppszIcon)
 {
-    std::wstring iconPath = SevenZipHelper::Get7zFMPath() + L",0";
-    return AllocString(iconPath, ppszIcon);
+    if (ppszIcon) *ppszIcon = nullptr;
+    return E_NOTIMPL;
 }
 
 IFACEMETHODIMP SevenZipSubCommand::GetToolTip(IShellItemArray* psiItemArray, LPWSTR* ppszInfo)
 {
-    return GetTitle(psiItemArray, ppszInfo);
+    if (ppszInfo) *ppszInfo = nullptr;
+    return E_NOTIMPL;
 }
 
 IFACEMETHODIMP SevenZipSubCommand::GetCanonicalName(GUID* pguidCommandName)
 {
     if (!pguidCommandName) return E_POINTER;
-    // Derive a unique GUID based on action index
     *pguidCommandName = CLSID_SevenZipContextMenu;
     pguidCommandName->Data1 += static_cast<unsigned long>(m_action);
     return S_OK;
@@ -113,9 +131,6 @@ IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL 
 {
     if (!pCmdState) return E_POINTER;
 
-    std::vector<std::wstring> paths = SevenZipHelper::GetPathsFromShellItemArray(psiItemArray);
-    bool hasArchive = SevenZipHelper::AnyIsArchive(paths);
-
     switch (m_action)
     {
     case ACTION_OPEN:
@@ -123,11 +138,12 @@ IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL 
     case ACTION_EXTRACT_HERE:
     case ACTION_EXTRACT_TO_FOLDER:
     case ACTION_TEST:
-        *pCmdState = hasArchive ? ECS_ENABLED : ECS_HIDDEN;
-        return S_OK;
     case ACTION_SEP_1:
-        *pCmdState = hasArchive ? ECS_ENABLED : ECS_HIDDEN;
+    {
+        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        *pCmdState = info.isArchive ? ECS_ENABLED : ECS_HIDDEN;
         return S_OK;
+    }
     case ACTION_SEP_2:
     case ACTION_ADD_DIALOG:
     case ACTION_COMPRESS_EMAIL_DIALOG:
@@ -138,8 +154,6 @@ IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL 
     case ACTION_CRC_SHA_ALL:
     case ACTION_CRC_SHA_256:
     case ACTION_CRC_32:
-        *pCmdState = ECS_ENABLED;
-        return S_OK;
     default:
         *pCmdState = ECS_ENABLED;
         return S_OK;
@@ -154,10 +168,14 @@ IFACEMETHODIMP SevenZipSubCommand::Invoke(IShellItemArray* psiItemArray, IBindCt
         return S_OK;
     }
 
-    std::wstring z7G = SevenZipHelper::Get7zGPath();
-    std::wstring z7FM = SevenZipHelper::Get7zFMPath();
+    const std::wstring& z7G = SevenZipHelper::Get7zGPath();
+    const std::wstring& z7FM = SevenZipHelper::Get7zFMPath();
     std::wstring parentDir = SevenZipHelper::GetParentDirectory(paths[0]);
-    std::wstring baseName = SevenZipHelper::GetDefaultArchiveBaseName(paths);
+    std::wstring baseName = (paths.size() == 1) ?
+        SevenZipHelper::GetFileNameWithoutExtension(paths[0]) :
+        SevenZipHelper::GetFileName(parentDir);
+    if (baseName.empty()) baseName = L"Archive";
+
     std::wstring fileArgs = SevenZipHelper::BuildFileArgumentList(paths);
 
     switch (m_action)
@@ -403,13 +421,13 @@ IFACEMETHODIMP SevenZipRootCommand::GetTitle(IShellItemArray* psiItemArray, LPWS
 
 IFACEMETHODIMP SevenZipRootCommand::GetIcon(IShellItemArray* psiItemArray, LPWSTR* ppszIcon)
 {
-    std::wstring iconPath = SevenZipHelper::Get7zFMPath() + L",0";
-    return AllocString(iconPath, ppszIcon);
+    return AllocString(SevenZipHelper::GetRootIconPath(), ppszIcon);
 }
 
 IFACEMETHODIMP SevenZipRootCommand::GetToolTip(IShellItemArray* psiItemArray, LPWSTR* ppszInfo)
 {
-    return AllocString(L"7-Zip Compression and Extraction", ppszInfo);
+    if (ppszInfo) *ppszInfo = nullptr;
+    return E_NOTIMPL;
 }
 
 IFACEMETHODIMP SevenZipRootCommand::GetCanonicalName(GUID* pguidCommandName)
@@ -429,7 +447,7 @@ IFACEMETHODIMP SevenZipRootCommand::GetState(IShellItemArray* psiItemArray, BOOL
 IFACEMETHODIMP SevenZipRootCommand::Invoke(IShellItemArray* psiItemArray, IBindCtx* pbc)
 {
     std::vector<std::wstring> paths = SevenZipHelper::GetPathsFromShellItemArray(psiItemArray);
-    std::wstring z7FM = SevenZipHelper::Get7zFMPath();
+    const std::wstring& z7FM = SevenZipHelper::Get7zFMPath();
     std::wstring workDir = paths.empty() ? L"" : SevenZipHelper::GetParentDirectory(paths[0]);
     std::wstring arg = paths.empty() ? L"" : L"\"" + paths[0] + L"\"";
     SevenZipHelper::LaunchProcess(z7FM, arg, workDir);
@@ -447,7 +465,7 @@ IFACEMETHODIMP SevenZipRootCommand::EnumSubCommands(IEnumExplorerCommand** ppEnu
 {
     if (!ppEnum) return E_POINTER;
 
-    std::vector<SevenZipActionType> actions = {
+    static const std::vector<SevenZipActionType> s_actions = {
         ACTION_OPEN,
         ACTION_EXTRACT_DIALOG,
         ACTION_EXTRACT_HERE,
@@ -466,6 +484,6 @@ IFACEMETHODIMP SevenZipRootCommand::EnumSubCommands(IEnumExplorerCommand** ppEnu
         ACTION_CRC_32
     };
 
-    *ppEnum = new SevenZipEnumCommands(actions);
+    *ppEnum = new SevenZipEnumCommands(s_actions);
     return S_OK;
 }

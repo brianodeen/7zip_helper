@@ -6,30 +6,38 @@
 
 namespace SevenZipHelper
 {
-    // Find 7-Zip installation directory
-    std::wstring GetSevenZipDirectory();
-    std::wstring Get7zGPath();
-    std::wstring Get7zFMPath();
+    struct SelectionInfo
+    {
+        DWORD count = 0;
+        std::wstring firstItemPath;
+        std::wstring baseName;
+        bool isArchive = false;
+    };
 
-    // Archive check
+    // Cached 7-Zip installation paths
+    const std::wstring& GetSevenZipDirectory();
+    const std::wstring& Get7zGPath();
+    const std::wstring& Get7zFMPath();
+    const std::wstring& GetRootIconPath();
+
+    // Fast archive check
     bool IsArchiveFile(const std::wstring& path);
-    bool AnyIsArchive(const std::vector<std::wstring>& paths);
-    bool AllAreArchives(const std::vector<std::wstring>& paths);
 
-    // Extraction & path utilities
+    // Fast path utilities
     std::wstring GetFileName(const std::wstring& path);
     std::wstring GetFileNameWithoutExtension(const std::wstring& path);
     std::wstring GetParentDirectory(const std::wstring& path);
-    std::wstring GetDefaultArchiveBaseName(const std::vector<std::wstring>& paths);
-    std::wstring GetDefaultDestinationFolder(const std::vector<std::wstring>& paths);
 
-    // ShellItemArray helper
+    // Fast selection info retrieval (only inspects item 0 for UI responsiveness)
+    SelectionInfo GetFastSelectionInfo(IShellItemArray* psiItemArray);
+
+    // Full path retrieval (only used when user actually clicks/invokes an action)
     std::vector<std::wstring> GetPathsFromShellItemArray(IShellItemArray* psiItemArray);
 
     // Process launcher
     bool LaunchProcess(const std::wstring& exePath, const std::wstring& arguments, const std::wstring& workingDirectory = L"");
 
-    // List file helper (for passing multiple files safely)
+    // List file helper (for passing multiple files safely on invoke)
     std::wstring CreateTempListFile(const std::vector<std::wstring>& paths);
     std::wstring BuildFileArgumentList(const std::vector<std::wstring>& paths);
 }
