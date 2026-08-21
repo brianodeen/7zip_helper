@@ -1,0 +1,22 @@
+# Visual Studio / CMake build directories
+build/
+bin/
+obj/
+out/
+.vs/
+*.user
+
+# Intermediate compiler and linker files
+*.obj
+*.exp
+*.lib
+*.pdb
+*.tmp
+
+# Generated packages
+*.msix
+*.cer
+
+# Built binaries (rebuilt by build.ps1 / install.ps1)
+package/*.dll
+package/*.exe
