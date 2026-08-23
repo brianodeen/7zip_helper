@@ -20,7 +20,7 @@ namespace SevenZipHelper
     const std::wstring& Get7zFMPath();
     const std::wstring& GetRootIconPath();
 
-    // Fast archive check
+    // Zero-allocation case-insensitive archive check
     bool IsArchiveFile(const std::wstring& path);
 
     // Fast path utilities
@@ -28,8 +28,8 @@ namespace SevenZipHelper
     std::wstring GetFileNameWithoutExtension(const std::wstring& path);
     std::wstring GetParentDirectory(const std::wstring& path);
 
-    // Fast selection info retrieval (only inspects item 0 for UI responsiveness)
-    SelectionInfo GetFastSelectionInfo(IShellItemArray* psiItemArray);
+    // Thread-local memoized selection info (queries item 0 once per right-click event)
+    const SelectionInfo& GetFastSelectionInfo(IShellItemArray* psiItemArray);
 
     // Full path retrieval (only used when user actually clicks/invokes an action)
     std::vector<std::wstring> GetPathsFromShellItemArray(IShellItemArray* psiItemArray);

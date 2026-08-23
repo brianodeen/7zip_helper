@@ -1,7 +1,6 @@
 #include "SevenZipHelper.h"
 #include <shlwapi.h>
 #include <fstream>
-#include <algorithm>
 #include <sstream>
 
 #pragma comment(lib, "shlwapi.lib")
@@ -9,12 +8,6 @@
 
 namespace SevenZipHelper
 {
-    static std::wstring ToLower(std::wstring str)
-    {
-        std::transform(str.begin(), str.end(), str.begin(), ::towlower);
-        return str;
-    }
-
     static bool ReadRegistryPath(HKEY hRootKey, const wchar_t* subKey, std::wstring& outPath)
     {
         HKEY hKey = nullptr;
@@ -92,13 +85,14 @@ namespace SevenZipHelper
 
     bool IsArchiveFile(const std::wstring& path)
     {
-        if (path.empty())
-        {
-            return false;
-        }
+        if (path.empty()) return false;
 
-        std::wstring lower = ToLower(path);
-        const wchar_t* extensions[] = {
+        size_t lastDot = path.find_last_of(L'.');
+        if (lastDot == std::wstring::npos) return false;
+
+        const wchar_t* ext = path.c_str() + lastDot;
+
+        static const wchar_t* const s_extensions[] = {
             L".7z", L".zip", L".rar", L".tar", L".gz", L".tgz", L".bz2", L".tbz2", L".tbz",
             L".xz", L".txz", L".iso", L".wim", L".cab", L".arj", L".lzh", L".lha", L".z",
             L".taz", L".cpio", L".rpm", L".deb", L".dmg", L".hfs", L".xar", L".vhd", L".vhdx",
@@ -106,14 +100,31 @@ namespace SevenZipHelper
             L".jar", L".war", L".ear", L".apk", L".ipa"
         };
 
-        for (const auto& ext : extensions)
+        for (const auto* knownExt : s_extensions)
         {
-            size_t extLen = wcslen(ext);
-            if (lower.length() >= extLen && lower.compare(lower.length() - extLen, extLen, ext) == 0)
+            if (_wcsicmp(ext, knownExt) == 0)
             {
                 return true;
             }
         }
+
+        // Check compound extensions (e.g. .tar.gz)
+        if (lastDot > 4)
+        {
+            size_t prevDot = path.find_last_of(L'.', lastDot - 1);
+            if (prevDot != std::wstring::npos)
+            {
+                const wchar_t* compoundExt = path.c_str() + prevDot;
+                if (_wcsicmp(compoundExt, L".tar.gz") == 0 ||
+                    _wcsicmp(compoundExt, L".tar.bz2") == 0 ||
+                    _wcsicmp(compoundExt, L".tar.xz") == 0 ||
+                    _wcsicmp(compoundExt, L".tar.z") == 0)
+                {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
@@ -133,23 +144,30 @@ namespace SevenZipHelper
         std::wstring fileName = GetFileName(path);
         if (fileName.empty()) return L"";
 
-        std::wstring lower = ToLower(fileName);
-        const wchar_t* compoundExts[] = { L".tar.gz", L".tar.bz2", L".tar.xz", L".tar.z" };
-        for (const auto& cExt : compoundExts)
+        size_t lastDot = fileName.find_last_of(L'.');
+        if (lastDot == std::wstring::npos || lastDot == 0)
         {
-            size_t cLen = wcslen(cExt);
-            if (lower.length() >= cLen && lower.compare(lower.length() - cLen, cLen, cExt) == 0)
+            return fileName;
+        }
+
+        // Check compound extensions
+        if (lastDot > 4)
+        {
+            size_t prevDot = fileName.find_last_of(L'.', lastDot - 1);
+            if (prevDot != std::wstring::npos)
             {
-                return fileName.substr(0, fileName.length() - cLen);
+                const wchar_t* compoundExt = fileName.c_str() + prevDot;
+                if (_wcsicmp(compoundExt, L".tar.gz") == 0 ||
+                    _wcsicmp(compoundExt, L".tar.bz2") == 0 ||
+                    _wcsicmp(compoundExt, L".tar.xz") == 0 ||
+                    _wcsicmp(compoundExt, L".tar.z") == 0)
+                {
+                    return fileName.substr(0, prevDot);
+                }
             }
         }
 
-        size_t dotPos = fileName.find_last_of(L'.');
-        if (dotPos != std::wstring::npos && dotPos > 0)
-        {
-            return fileName.substr(0, dotPos);
-        }
-        return fileName;
+        return fileName.substr(0, lastDot);
     }
 
     std::wstring GetParentDirectory(const std::wstring& path)
@@ -163,15 +181,30 @@ namespace SevenZipHelper
         return path.substr(0, lastSlash);
     }
 
-    SelectionInfo GetFastSelectionInfo(IShellItemArray* psiItemArray)
+    const SelectionInfo& GetFastSelectionInfo(IShellItemArray* psiItemArray)
     {
-        SelectionInfo info;
-        if (!psiItemArray) return info;
+        static thread_local IShellItemArray* s_lastItemArray = nullptr;
+        static thread_local SelectionInfo s_cachedInfo;
 
-        if (FAILED(psiItemArray->GetCount(&info.count)) || info.count == 0)
+        if (!psiItemArray)
         {
-            info.baseName = L"Archive";
-            return info;
+            static const SelectionInfo s_emptyInfo{ 0, L"", L"Archive", false };
+            return s_emptyInfo;
+        }
+
+        // Pointer memoization: if this is the same IShellItemArray pointer from Explorer, return cached immediately
+        if (psiItemArray == s_lastItemArray)
+        {
+            return s_cachedInfo;
+        }
+
+        s_lastItemArray = psiItemArray;
+        s_cachedInfo = SelectionInfo{};
+
+        if (FAILED(psiItemArray->GetCount(&s_cachedInfo.count)) || s_cachedInfo.count == 0)
+        {
+            s_cachedInfo.baseName = L"Archive";
+            return s_cachedInfo;
         }
 
         IShellItem* pItem = nullptr;
@@ -180,32 +213,32 @@ namespace SevenZipHelper
             LPWSTR pszPath = nullptr;
             if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath)) && pszPath)
             {
-                info.firstItemPath = pszPath;
+                s_cachedInfo.firstItemPath = pszPath;
                 CoTaskMemFree(pszPath);
             }
             pItem->Release();
         }
 
-        if (!info.firstItemPath.empty())
+        if (!s_cachedInfo.firstItemPath.empty())
         {
-            info.isArchive = IsArchiveFile(info.firstItemPath);
-            if (info.count == 1)
+            s_cachedInfo.isArchive = IsArchiveFile(s_cachedInfo.firstItemPath);
+            if (s_cachedInfo.count == 1)
             {
-                info.baseName = GetFileNameWithoutExtension(info.firstItemPath);
+                s_cachedInfo.baseName = GetFileNameWithoutExtension(s_cachedInfo.firstItemPath);
             }
             else
             {
-                std::wstring parentDir = GetParentDirectory(info.firstItemPath);
-                info.baseName = GetFileName(parentDir);
+                std::wstring parentDir = GetParentDirectory(s_cachedInfo.firstItemPath);
+                s_cachedInfo.baseName = GetFileName(parentDir);
             }
         }
 
-        if (info.baseName.empty())
+        if (s_cachedInfo.baseName.empty())
         {
-            info.baseName = L"Archive";
+            s_cachedInfo.baseName = L"Archive";
         }
 
-        return info;
+        return s_cachedInfo;
     }
 
     std::vector<std::wstring> GetPathsFromShellItemArray(IShellItemArray* psiItemArray)

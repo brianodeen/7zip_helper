@@ -4,7 +4,25 @@ project(SevenZipContextMenu LANGUAGES CXX RC)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_definitions(-DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN)
+add_definitions(-DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+
+if (MSVC)
+    add_compile_options(
+        /O2         # Maximize speed
+        /Oi         # Enable intrinsic functions
+        /Ot         # Favor fast code
+        /GL         # Whole program optimization
+        /GF         # Eliminate duplicate strings
+        /Gy         # Function-level linking
+        /MP         # Multi-processor compilation
+        /W4         # High warning level
+    )
+    add_link_options(
+        /LTCG       # Link-time code generation
+        /OPT:REF    # Eliminate unreferenced data/functions
+        /OPT:ICF    # Fold identical COMDATs
+    )
+endif()
 
 set(DLL_SOURCES
     src/dllmain.cpp

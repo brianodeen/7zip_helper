@@ -71,6 +71,7 @@ public:
 private:
     long m_refCount;
     std::vector<SevenZipActionType> m_actions;
+    std::vector<SevenZipSubCommand*> m_commands;
     size_t m_currentIndex;
 };
 

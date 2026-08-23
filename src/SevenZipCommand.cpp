@@ -5,7 +5,7 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-// Helper to duplicate wide string to COM task memory
+// Fast in-place COM string duplication
 static inline HRESULT AllocString(const wchar_t* str, LPWSTR* ppsz)
 {
     if (!ppsz) return E_POINTER;
@@ -67,7 +67,7 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
         return AllocString(L"Extract Here", ppszName);
     case ACTION_EXTRACT_TO_FOLDER:
     {
-        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        const SevenZipHelper::SelectionInfo& info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
         return AllocString(L"Extract to \"" + info.baseName + L"\\\"", ppszName);
     }
     case ACTION_TEST:
@@ -78,22 +78,22 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
         return AllocString(L"Compress and email...", ppszName);
     case ACTION_ADD_7Z:
     {
-        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        const SevenZipHelper::SelectionInfo& info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
         return AllocString(L"Add to \"" + info.baseName + L".7z\"", ppszName);
     }
     case ACTION_ADD_ZIP:
     {
-        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        const SevenZipHelper::SelectionInfo& info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
         return AllocString(L"Add to \"" + info.baseName + L".zip\"", ppszName);
     }
     case ACTION_COMPRESS_7Z_EMAIL:
     {
-        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        const SevenZipHelper::SelectionInfo& info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
         return AllocString(L"Compress to \"" + info.baseName + L".7z\" and email", ppszName);
     }
     case ACTION_COMPRESS_ZIP_EMAIL:
     {
-        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        const SevenZipHelper::SelectionInfo& info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
         return AllocString(L"Compress to \"" + info.baseName + L".zip\" and email", ppszName);
     }
     case ACTION_CRC_SHA_ALL:
@@ -107,13 +107,13 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
     }
 }
 
-IFACEMETHODIMP SevenZipSubCommand::GetIcon(IShellItemArray* psiItemArray, LPWSTR* ppszIcon)
+IFACEMETHODIMP SevenZipSubCommand::GetIcon(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszIcon)
 {
     if (ppszIcon) *ppszIcon = nullptr;
     return E_NOTIMPL;
 }
 
-IFACEMETHODIMP SevenZipSubCommand::GetToolTip(IShellItemArray* psiItemArray, LPWSTR* ppszInfo)
+IFACEMETHODIMP SevenZipSubCommand::GetToolTip(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszInfo)
 {
     if (ppszInfo) *ppszInfo = nullptr;
     return E_NOTIMPL;
@@ -127,7 +127,7 @@ IFACEMETHODIMP SevenZipSubCommand::GetCanonicalName(GUID* pguidCommandName)
     return S_OK;
 }
 
-IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL fOkToBeSlow, EXPCMDSTATE* pCmdState)
+IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL /*fOkToBeSlow*/, EXPCMDSTATE* pCmdState)
 {
     if (!pCmdState) return E_POINTER;
 
@@ -140,7 +140,7 @@ IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL 
     case ACTION_TEST:
     case ACTION_SEP_1:
     {
-        SevenZipHelper::SelectionInfo info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
+        const SevenZipHelper::SelectionInfo& info = SevenZipHelper::GetFastSelectionInfo(psiItemArray);
         *pCmdState = info.isArchive ? ECS_ENABLED : ECS_HIDDEN;
         return S_OK;
     }
@@ -160,7 +160,7 @@ IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL 
     }
 }
 
-IFACEMETHODIMP SevenZipSubCommand::Invoke(IShellItemArray* psiItemArray, IBindCtx* pbc)
+IFACEMETHODIMP SevenZipSubCommand::Invoke(IShellItemArray* psiItemArray, IBindCtx* /*pbc*/)
 {
     std::vector<std::wstring> paths = SevenZipHelper::GetPathsFromShellItemArray(psiItemArray);
     if (paths.empty())
@@ -290,12 +290,24 @@ IFACEMETHODIMP SevenZipSubCommand::EnumSubCommands(IEnumExplorerCommand** ppEnum
 // ----------------------------------------------------------------------------
 
 SevenZipEnumCommands::SevenZipEnumCommands(const std::vector<SevenZipActionType>& actions)
-    : m_refCount(1), m_actions(actions), m_currentIndex(0)
+    : m_refCount(1), m_currentIndex(0)
 {
+    m_commands.reserve(actions.size());
+    for (const auto action : actions)
+    {
+        m_commands.push_back(new SevenZipSubCommand(action));
+    }
 }
 
 SevenZipEnumCommands::~SevenZipEnumCommands()
 {
+    for (auto* cmd : m_commands)
+    {
+        if (cmd)
+        {
+            cmd->Release();
+        }
+    }
 }
 
 IFACEMETHODIMP SevenZipEnumCommands::QueryInterface(REFIID riid, void** ppv)
@@ -335,9 +347,10 @@ IFACEMETHODIMP SevenZipEnumCommands::Next(ULONG celt, IExplorerCommand** pUIComm
     }
 
     ULONG fetched = 0;
-    while (m_currentIndex < m_actions.size() && fetched < celt)
+    while (m_currentIndex < m_commands.size() && fetched < celt)
     {
-        SevenZipSubCommand* pCmd = new SevenZipSubCommand(m_actions[m_currentIndex]);
+        SevenZipSubCommand* pCmd = m_commands[m_currentIndex];
+        pCmd->AddRef();
         pUICommand[fetched] = pCmd;
         fetched++;
         m_currentIndex++;
@@ -354,9 +367,9 @@ IFACEMETHODIMP SevenZipEnumCommands::Next(ULONG celt, IExplorerCommand** pUIComm
 IFACEMETHODIMP SevenZipEnumCommands::Skip(ULONG celt)
 {
     m_currentIndex += celt;
-    if (m_currentIndex > m_actions.size())
+    if (m_currentIndex > m_commands.size())
     {
-        m_currentIndex = m_actions.size();
+        m_currentIndex = m_commands.size();
         return S_FALSE;
     }
     return S_OK;
@@ -414,17 +427,17 @@ IFACEMETHODIMP_(ULONG) SevenZipRootCommand::Release()
     return ref;
 }
 
-IFACEMETHODIMP SevenZipRootCommand::GetTitle(IShellItemArray* psiItemArray, LPWSTR* ppszName)
+IFACEMETHODIMP SevenZipRootCommand::GetTitle(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszName)
 {
     return AllocString(L"7-Zip", ppszName);
 }
 
-IFACEMETHODIMP SevenZipRootCommand::GetIcon(IShellItemArray* psiItemArray, LPWSTR* ppszIcon)
+IFACEMETHODIMP SevenZipRootCommand::GetIcon(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszIcon)
 {
     return AllocString(SevenZipHelper::GetRootIconPath(), ppszIcon);
 }
 
-IFACEMETHODIMP SevenZipRootCommand::GetToolTip(IShellItemArray* psiItemArray, LPWSTR* ppszInfo)
+IFACEMETHODIMP SevenZipRootCommand::GetToolTip(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszInfo)
 {
     if (ppszInfo) *ppszInfo = nullptr;
     return E_NOTIMPL;
@@ -437,14 +450,14 @@ IFACEMETHODIMP SevenZipRootCommand::GetCanonicalName(GUID* pguidCommandName)
     return S_OK;
 }
 
-IFACEMETHODIMP SevenZipRootCommand::GetState(IShellItemArray* psiItemArray, BOOL fOkToBeSlow, EXPCMDSTATE* pCmdState)
+IFACEMETHODIMP SevenZipRootCommand::GetState(IShellItemArray* /*psiItemArray*/, BOOL /*fOkToBeSlow*/, EXPCMDSTATE* pCmdState)
 {
     if (!pCmdState) return E_POINTER;
     *pCmdState = ECS_ENABLED;
     return S_OK;
 }
 
-IFACEMETHODIMP SevenZipRootCommand::Invoke(IShellItemArray* psiItemArray, IBindCtx* pbc)
+IFACEMETHODIMP SevenZipRootCommand::Invoke(IShellItemArray* psiItemArray, IBindCtx* /*pbc*/)
 {
     std::vector<std::wstring> paths = SevenZipHelper::GetPathsFromShellItemArray(psiItemArray);
     const std::wstring& z7FM = SevenZipHelper::Get7zFMPath();
