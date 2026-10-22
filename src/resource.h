@@ -1,3 +1,4 @@
 #pragma once
 
-#define IDS_APP_TITLE 101
+#define IDI_SEVENZIP  101
+#define IDS_APP_TITLE 102

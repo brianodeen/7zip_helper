@@ -25,11 +25,11 @@ enum SevenZipActionType
     ACTION_CRC_32
 };
 
-class SevenZipSubCommand : public IExplorerCommand
+class SevenZipSubCommand final : public IExplorerCommand
 {
 public:
-    SevenZipSubCommand(SevenZipActionType action);
-    virtual ~SevenZipSubCommand();
+    SevenZipSubCommand(SevenZipActionType action, bool isStaticSingleton = false);
+    ~SevenZipSubCommand();
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -49,13 +49,15 @@ public:
 private:
     long m_refCount;
     SevenZipActionType m_action;
+    bool m_isStaticSingleton;
+    IUnknown* m_pUnkMarshaler;
 };
 
-class SevenZipEnumCommands : public IEnumExplorerCommand
+class SevenZipEnumCommands final : public IEnumExplorerCommand
 {
 public:
-    SevenZipEnumCommands(const std::vector<SevenZipActionType>& actions);
-    virtual ~SevenZipEnumCommands();
+    SevenZipEnumCommands(size_t startIndex = 0);
+    ~SevenZipEnumCommands();
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -70,16 +72,15 @@ public:
 
 private:
     long m_refCount;
-    std::vector<SevenZipActionType> m_actions;
-    std::vector<SevenZipSubCommand*> m_commands;
     size_t m_currentIndex;
+    IUnknown* m_pUnkMarshaler;
 };
 
-class SevenZipRootCommand : public IExplorerCommand
+class SevenZipRootCommand final : public IExplorerCommand
 {
 public:
     SevenZipRootCommand();
-    virtual ~SevenZipRootCommand();
+    ~SevenZipRootCommand();
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -98,4 +99,5 @@ public:
 
 private:
     long m_refCount;
+    IUnknown* m_pUnkMarshaler;
 };

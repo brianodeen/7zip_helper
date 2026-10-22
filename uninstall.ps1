@@ -42,6 +42,12 @@ if ($pkg) {
     Write-Host "No active SevenZipContextMenu package was found." -ForegroundColor DarkYellow
 }
 
+# Clean up InProcServer32 registry registration
+$clsidKey = "HKCU:\Software\Classes\CLSID\{4B5E8908-7211-460B-A512-88F9A64B7C99}"
+if (Test-Path $clsidKey) {
+    Remove-Item -Path $clsidKey -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # Clean up certificate from LocalMachine\TrustedPeople
 $certSubject = "CN=SevenZipContextMenu"
 $cert = Get-ChildItem "Cert:\LocalMachine\TrustedPeople" -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $certSubject }

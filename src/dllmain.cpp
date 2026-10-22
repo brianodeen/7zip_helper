@@ -1,18 +1,31 @@
 #include <windows.h>
 #include "Guid.h"
 #include "ClassFactory.h"
+#include "SevenZipHelper.h"
 
-HMODULE g_hModule = nullptr;
-long g_dllRefCount = 0;
+extern HMODULE g_hModule;
+long g_dllRefCount = 1; // Keep >= 1 so DllCanUnloadNow never unloads the cached DLL
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID /*lpReserved*/)
 {
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:
+    {
         g_hModule = hModule;
         DisableThreadLibraryCalls(hModule);
+
+        // Pin the DLL in memory so CoFreeUnusedLibraries never unloads it
+        HMODULE hPinned = nullptr;
+        GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(hModule),
+            &hPinned
+        );
+
+        SevenZipHelper::WarmupCache();
         break;
+    }
     case DLL_THREAD_ATTACH:
     case DLL_THREAD_DETACH:
     case DLL_PROCESS_DETACH:
@@ -28,15 +41,8 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
 
     if (IsEqualCLSID(rclsid, CLSID_SevenZipContextMenu))
     {
-        ClassFactory* pFactory = new ClassFactory();
-        if (!pFactory)
-        {
-            return E_OUTOFMEMORY;
-        }
-
-        HRESULT hr = pFactory->QueryInterface(riid, ppv);
-        pFactory->Release();
-        return hr;
+        static ClassFactory s_factory;
+        return s_factory.QueryInterface(riid, ppv);
     }
 
     return CLASS_E_CLASSNOTAVAILABLE;
@@ -44,7 +50,8 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
 
 STDAPI DllCanUnloadNow()
 {
-    return (g_dllRefCount == 0) ? S_OK : S_FALSE;
+    // Always stay resident in memory (~70 KB) for instant 0ms response on subsequent right-clicks
+    return S_FALSE;
 }
 
 STDAPI DllRegisterServer()

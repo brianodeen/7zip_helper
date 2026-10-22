@@ -8,31 +8,6 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $ScriptDir
 
-# Check for Administrator privileges
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if (-not $isAdmin) {
-    Write-Host "Administrator privileges are required to trust the local test certificate and register the shell extension." -ForegroundColor Yellow
-    try {
-        Write-Host "Attempting to launch elevated PowerShell prompt..." -ForegroundColor Cyan
-        $process = Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs -PassThru -Wait
-        exit $process.ExitCode
-    } catch {
-        Write-Host ""
-        Write-Host "==========================================================================" -ForegroundColor Red
-        Write-Host " ELEVATION REQUIRED: Please open PowerShell as Administrator and run:     " -ForegroundColor Yellow
-        Write-Host "   Set-Location `"$ScriptDir`"" -ForegroundColor Cyan
-        Write-Host "   .\install.ps1" -ForegroundColor Cyan
-        Write-Host "==========================================================================" -ForegroundColor Red
-        Write-Host ""
-        exit 1
-    }
-}
-
-Write-Host "===============================================" -ForegroundColor Cyan
-Write-Host " Installing 7-Zip Modern Context Menu Extension" -ForegroundColor Cyan
-Write-Host "===============================================" -ForegroundColor Cyan
-
 $packageDir = Join-Path $ScriptDir "package"
 $dllPath = Join-Path $packageDir "SevenZipContextMenu.dll"
 $exePath = Join-Path $packageDir "SevenZipContextMenu.exe"
@@ -67,7 +42,6 @@ if ($needsPack) {
         throw "Windows SDK tools (makeappx.exe / signtool.exe) not found to package MSIX. Please install the Windows SDK."
     }
 
-    # Generate or find Self-Signed Certificate
     $certSubject = "CN=SevenZipContextMenu"
     $cert = Get-ChildItem "Cert:\CurrentUser\My" | Where-Object { $_.Subject -eq $certSubject } | Select-Object -First 1
 
@@ -99,9 +73,34 @@ if ($needsPack) {
     }
 }
 
-# 3. Trust the signer certificate in LocalMachine\TrustedPeople
+# 3. Check if signer certificate is already trusted in LocalMachine\TrustedPeople
 $sig = Get-AuthenticodeSignature $msixPath
+$isTrusted = $false
 if ($sig.SignerCertificate) {
+    $trustedCert = Get-ChildItem "Cert:\LocalMachine\TrustedPeople" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Thumbprint -eq $sig.SignerCertificate.Thumbprint } |
+        Select-Object -First 1
+    if ($trustedCert) {
+        $isTrusted = $true
+    }
+}
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isTrusted -and -not $isAdmin) {
+    Write-Host "Administrator privileges are required once to trust the package signing certificate." -ForegroundColor Yellow
+    try {
+        Write-Host "Launching elevated PowerShell prompt..." -ForegroundColor Cyan
+        $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        $process = Start-Process powershell.exe -ArgumentList $argList -Verb RunAs -PassThru -Wait
+        exit $process.ExitCode
+    } catch {
+        Write-Host "Elevation was cancelled or failed. Please run .\install.ps1 as Administrator." -ForegroundColor Red
+        exit 1
+    }
+}
+
+if (-not $isTrusted -and $sig.SignerCertificate) {
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("TrustedPeople", "LocalMachine")
     $store.Open("ReadWrite")
     $store.Add($sig.SignerCertificate)
@@ -109,18 +108,53 @@ if ($sig.SignerCertificate) {
     Write-Host "Signer certificate trusted in LocalMachine\TrustedPeople." -ForegroundColor Green
 }
 
-# 4. Remove previous registration if present
-$existing = Get-AppxPackage -Name "SevenZipContextMenu" -AllUsers -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Host "Removing previous package registration..." -ForegroundColor Yellow
-    Remove-AppxPackage -Package $existing.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+Write-Host "===============================================" -ForegroundColor Cyan
+Write-Host " Installing 7-Zip Modern Context Menu Extension" -ForegroundColor Cyan
+Write-Host "===============================================" -ForegroundColor Cyan
+
+# 4. Pre-fetch and store 7-Zip installation path in HKCU:\Software\7-Zip
+$sevenZipCandidates = @(
+    (Get-ItemProperty "HKCU:\Software\7-Zip" -ErrorAction SilentlyContinue).Path,
+    (Get-ItemProperty "HKLM:\SOFTWARE\7-Zip" -ErrorAction SilentlyContinue).Path,
+    (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\7-Zip" -ErrorAction SilentlyContinue).Path,
+    "C:\Program Files\7-Zip",
+    "C:\Program Files (x86)\7-Zip"
+)
+foreach ($candidate in $sevenZipCandidates) {
+    if ($candidate) {
+        $cleanPath = $candidate.TrimEnd('\', '/')
+        if (Test-Path (Join-Path $cleanPath "7zG.exe")) {
+            if (-not (Test-Path "HKCU:\Software\7-Zip")) {
+                New-Item -Path "HKCU:\Software\7-Zip" -Force | Out-Null
+            }
+            Set-ItemProperty -Path "HKCU:\Software\7-Zip" -Name "Path" -Value $cleanPath
+            Write-Host "Pre-fetched 7-Zip location: $cleanPath" -ForegroundColor Green
+            break
+        }
+    }
 }
 
-# 5. Install Signed Sparse MSIX with ExternalLocation
+# 5. Remove previous package registration if present
+$existing = Get-AppxPackage -Name "SevenZipContextMenu" -ErrorAction SilentlyContinue
+if ($existing) {
+    Write-Host "Removing previous package registration..." -ForegroundColor Yellow
+    Remove-AppxPackage -Package $existing.PackageFullName -ErrorAction SilentlyContinue
+}
+
+# 6. Install Signed Sparse MSIX with ExternalLocation
 Write-Host "Installing Signed Sparse MSIX with ExternalLocation..." -ForegroundColor Yellow
 Add-AppxPackage -Path "$msixPath" -ExternalLocation "$packageDir"
 
-# 6. Verify installation
+# 7. Register InProcServer32 in HKCU for zero-latency in-process COM activation
+$clsidKey = "HKCU:\Software\Classes\CLSID\{4B5E8908-7211-460B-A512-88F9A64B7C99}"
+$inprocKey = "$clsidKey\InProcServer32"
+New-Item -Path $inprocKey -Force | Out-Null
+Set-ItemProperty -Path $clsidKey -Name "(default)" -Value "7-Zip Modern Context Menu"
+Set-ItemProperty -Path $inprocKey -Name "(default)" -Value $dllPath
+Set-ItemProperty -Path $inprocKey -Name "ThreadingModel" -Value "Both"
+Write-Host "Registered InProcServer32 (ThreadingModel=Both) at: $dllPath" -ForegroundColor Green
+
+# 8. Verify installation
 $check = Get-AppxPackage -Name "SevenZipContextMenu" -ErrorAction SilentlyContinue
 if ($check) {
     Write-Host "===============================================" -ForegroundColor Green

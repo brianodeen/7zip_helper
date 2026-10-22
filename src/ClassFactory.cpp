@@ -17,26 +17,25 @@ ClassFactory::~ClassFactory()
 
 IFACEMETHODIMP ClassFactory::QueryInterface(REFIID riid, void** ppv)
 {
-    static const QITAB qit[] = {
-        QITABENT(ClassFactory, IClassFactory),
-        { 0 },
-    };
-    return QISearch(this, qit, riid, ppv);
+    if (!ppv) return E_POINTER;
+    if (IsEqualIID(riid, IID_IClassFactory) || IsEqualIID(riid, IID_IUnknown))
+    {
+        *ppv = static_cast<IClassFactory*>(this);
+        AddRef();
+        return S_OK;
+    }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
 }
 
 IFACEMETHODIMP_(ULONG) ClassFactory::AddRef()
 {
-    return InterlockedIncrement(&m_refCount);
+    return 2;
 }
 
 IFACEMETHODIMP_(ULONG) ClassFactory::Release()
 {
-    long ref = InterlockedDecrement(&m_refCount);
-    if (ref == 0)
-    {
-        delete this;
-    }
-    return ref;
+    return 1;
 }
 
 IFACEMETHODIMP ClassFactory::CreateInstance(IUnknown* pUnkOuter, REFIID riid, void** ppv)
@@ -49,15 +48,8 @@ IFACEMETHODIMP ClassFactory::CreateInstance(IUnknown* pUnkOuter, REFIID riid, vo
         return CLASS_E_NOAGGREGATION;
     }
 
-    SevenZipRootCommand* pCommand = new SevenZipRootCommand();
-    if (!pCommand)
-    {
-        return E_OUTOFMEMORY;
-    }
-
-    HRESULT hr = pCommand->QueryInterface(riid, ppv);
-    pCommand->Release();
-    return hr;
+    static SevenZipRootCommand s_rootCommand;
+    return s_rootCommand.QueryInterface(riid, ppv);
 }
 
 IFACEMETHODIMP ClassFactory::LockServer(BOOL fLock)
