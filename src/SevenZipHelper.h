@@ -41,11 +41,11 @@ namespace SevenZipHelper
     std::wstring GetFileNameWithoutExtension(const std::wstring& path);
     std::wstring GetParentDirectory(const std::wstring& path);
 
-    // Called once on RootCommand::GetState to populate the selection cache for all 16 subcommands
-    void UpdateSelectionCache(IShellItemArray* psiItemArray);
+    // Called ONLY once by SubCommand[0] (ACTION_OPEN) when the submenu is queried
+    const SelectionInfo& UpdateSelectionCache(IShellItemArray* psiItemArray);
 
-    // Returns the cached SelectionInfo with zero COM calls during subcommand enumeration
-    SelectionInfo GetCachedSelectionInfo(IShellItemArray* psiItemArray);
+    // Returns the already-cached SelectionInfo with ZERO COM calls for SubCommands[1..15]
+    const SelectionInfo& GetLastSelectionInfo() noexcept;
 
     // Full path retrieval (only used when user actually clicks/invokes an action)
     std::vector<std::wstring> GetPathsFromShellItemArray(IShellItemArray* psiItemArray);

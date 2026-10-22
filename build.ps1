@@ -60,7 +60,14 @@ if (-not (Test-Path $exeSource)) {
     throw "Compiled EXE not found at: $exeSource"
 }
 
-# Copy output to package folder
+# Copy output to package folder (terminate any warm dllhost holding SevenZipContextMenu.dll first)
+Get-Process dllhost -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+        if ($_.Modules.FileName -match 'SevenZipContextMenu\.dll') {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
 $packageDir = Join-Path $ScriptDir "package"
 Copy-Item -Path $dllSource -Destination (Join-Path $packageDir "SevenZipContextMenu.dll") -Force
 Copy-Item -Path $exeSource -Destination (Join-Path $packageDir "SevenZipContextMenu.exe") -Force

@@ -7,7 +7,6 @@
 
 extern long g_dllRefCount;
 
-// Fast in-place COM string duplication
 static inline HRESULT AllocString(const wchar_t* str, LPWSTR* ppsz) noexcept
 {
     if (!ppsz) return E_POINTER;
@@ -20,105 +19,59 @@ static inline HRESULT AllocString(const std::wstring& str, LPWSTR* ppsz) noexcep
     return SHStrDupW(str.c_str(), ppsz);
 }
 
-// Pre-allocated immortal subcommand table (zero heap allocations on menu open)
+// Pre-allocated static subcommand table (zero heap allocations on menu open)
 static constexpr size_t kSubCommandCount = 16;
 static SevenZipSubCommand s_subCommands[kSubCommandCount] = {
-    SevenZipSubCommand(ACTION_OPEN, true),
-    SevenZipSubCommand(ACTION_EXTRACT_DIALOG, true),
-    SevenZipSubCommand(ACTION_EXTRACT_HERE, true),
-    SevenZipSubCommand(ACTION_EXTRACT_TO_FOLDER, true),
-    SevenZipSubCommand(ACTION_TEST, true),
-    SevenZipSubCommand(ACTION_SEP_1, true),
-    SevenZipSubCommand(ACTION_ADD_DIALOG, true),
-    SevenZipSubCommand(ACTION_COMPRESS_EMAIL_DIALOG, true),
-    SevenZipSubCommand(ACTION_ADD_7Z, true),
-    SevenZipSubCommand(ACTION_ADD_ZIP, true),
-    SevenZipSubCommand(ACTION_COMPRESS_7Z_EMAIL, true),
-    SevenZipSubCommand(ACTION_COMPRESS_ZIP_EMAIL, true),
-    SevenZipSubCommand(ACTION_SEP_2, true),
-    SevenZipSubCommand(ACTION_CRC_SHA_ALL, true),
-    SevenZipSubCommand(ACTION_CRC_SHA_256, true),
-    SevenZipSubCommand(ACTION_CRC_32, true)
+    SevenZipSubCommand(ACTION_OPEN),
+    SevenZipSubCommand(ACTION_EXTRACT_DIALOG),
+    SevenZipSubCommand(ACTION_EXTRACT_HERE),
+    SevenZipSubCommand(ACTION_EXTRACT_TO_FOLDER),
+    SevenZipSubCommand(ACTION_TEST),
+    SevenZipSubCommand(ACTION_SEP_1),
+    SevenZipSubCommand(ACTION_ADD_DIALOG),
+    SevenZipSubCommand(ACTION_COMPRESS_EMAIL_DIALOG),
+    SevenZipSubCommand(ACTION_ADD_7Z),
+    SevenZipSubCommand(ACTION_ADD_ZIP),
+    SevenZipSubCommand(ACTION_COMPRESS_7Z_EMAIL),
+    SevenZipSubCommand(ACTION_COMPRESS_ZIP_EMAIL),
+    SevenZipSubCommand(ACTION_SEP_2),
+    SevenZipSubCommand(ACTION_CRC_SHA_ALL),
+    SevenZipSubCommand(ACTION_CRC_SHA_256),
+    SevenZipSubCommand(ACTION_CRC_32)
 };
 
 // ----------------------------------------------------------------------------
 // SevenZipSubCommand Implementation
 // ----------------------------------------------------------------------------
 
-SevenZipSubCommand::SevenZipSubCommand(SevenZipActionType action, bool isStaticSingleton)
-    : m_refCount(1), m_action(action), m_isStaticSingleton(isStaticSingleton), m_pUnkMarshaler(nullptr)
+SevenZipSubCommand::SevenZipSubCommand(SevenZipActionType action)
+    : m_action(action)
 {
-    if (!m_isStaticSingleton)
-    {
-        InterlockedIncrement(&g_dllRefCount);
-    }
-}
-
-SevenZipSubCommand::~SevenZipSubCommand()
-{
-    if (m_pUnkMarshaler)
-    {
-        m_pUnkMarshaler->Release();
-        m_pUnkMarshaler = nullptr;
-    }
-    if (!m_isStaticSingleton)
-    {
-        InterlockedDecrement(&g_dllRefCount);
-    }
 }
 
 IFACEMETHODIMP SevenZipSubCommand::QueryInterface(REFIID riid, void** ppv)
 {
     if (!ppv) return E_POINTER;
-
-    if (IsEqualIID(riid, IID_IExplorerCommand) || IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, __uuidof(IAgileObject)))
+    if (IsEqualIID(riid, IID_IExplorerCommand) || IsEqualIID(riid, IID_IUnknown))
     {
         *ppv = static_cast<IExplorerCommand*>(this);
-        AddRef();
         return S_OK;
     }
-
-    if (IsEqualIID(riid, IID_IMarshal))
-    {
-        if (!m_pUnkMarshaler)
-        {
-            IUnknown* pMarshaler = nullptr;
-            if (SUCCEEDED(CoCreateFreeThreadedMarshaler(static_cast<IExplorerCommand*>(this), &pMarshaler)))
-            {
-                if (InterlockedCompareExchangePointer(reinterpret_cast<PVOID*>(&m_pUnkMarshaler), pMarshaler, nullptr) != nullptr)
-                {
-                    pMarshaler->Release();
-                }
-            }
-        }
-        if (m_pUnkMarshaler)
-        {
-            return m_pUnkMarshaler->QueryInterface(riid, ppv);
-        }
-    }
-
     *ppv = nullptr;
     return E_NOINTERFACE;
 }
 
 IFACEMETHODIMP_(ULONG) SevenZipSubCommand::AddRef()
 {
-    if (m_isStaticSingleton) return 2;
-    return InterlockedIncrement(&m_refCount);
+    return 2;
 }
 
 IFACEMETHODIMP_(ULONG) SevenZipSubCommand::Release()
 {
-    if (m_isStaticSingleton) return 1;
-    long ref = InterlockedDecrement(&m_refCount);
-    if (ref == 0)
-    {
-        delete this;
-    }
-    return ref;
+    return 1;
 }
 
-IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWSTR* ppszName)
+IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszName)
 {
     switch (m_action)
     {
@@ -129,7 +82,7 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
     case ACTION_EXTRACT_HERE:
         return AllocString(L"Extract Here", ppszName);
     case ACTION_EXTRACT_TO_FOLDER:
-        return AllocString(SevenZipHelper::GetCachedSelectionInfo(psiItemArray).titleExtractTo, ppszName);
+        return AllocString(SevenZipHelper::GetLastSelectionInfo().titleExtractTo, ppszName);
     case ACTION_TEST:
         return AllocString(L"Test archive", ppszName);
     case ACTION_ADD_DIALOG:
@@ -137,13 +90,13 @@ IFACEMETHODIMP SevenZipSubCommand::GetTitle(IShellItemArray* psiItemArray, LPWST
     case ACTION_COMPRESS_EMAIL_DIALOG:
         return AllocString(L"Compress and email...", ppszName);
     case ACTION_ADD_7Z:
-        return AllocString(SevenZipHelper::GetCachedSelectionInfo(psiItemArray).titleAdd7z, ppszName);
+        return AllocString(SevenZipHelper::GetLastSelectionInfo().titleAdd7z, ppszName);
     case ACTION_ADD_ZIP:
-        return AllocString(SevenZipHelper::GetCachedSelectionInfo(psiItemArray).titleAddZip, ppszName);
+        return AllocString(SevenZipHelper::GetLastSelectionInfo().titleAddZip, ppszName);
     case ACTION_COMPRESS_7Z_EMAIL:
-        return AllocString(SevenZipHelper::GetCachedSelectionInfo(psiItemArray).titleEmail7z, ppszName);
+        return AllocString(SevenZipHelper::GetLastSelectionInfo().titleEmail7z, ppszName);
     case ACTION_COMPRESS_ZIP_EMAIL:
-        return AllocString(SevenZipHelper::GetCachedSelectionInfo(psiItemArray).titleEmailZip, ppszName);
+        return AllocString(SevenZipHelper::GetLastSelectionInfo().titleEmailZip, ppszName);
     case ACTION_CRC_SHA_ALL:
         return AllocString(L"CRC SHA (*)", ppszName);
     case ACTION_CRC_SHA_256:
@@ -182,16 +135,21 @@ IFACEMETHODIMP SevenZipSubCommand::GetState(IShellItemArray* psiItemArray, BOOL 
     switch (m_action)
     {
     case ACTION_OPEN:
+    {
+        // Only the very first subcommand probes psiItemArray once for the entire submenu
+        const auto& info = SevenZipHelper::UpdateSelectionCache(psiItemArray);
+        *pCmdState = info.isArchive ? ECS_ENABLED : ECS_HIDDEN;
+        return S_OK;
+    }
     case ACTION_EXTRACT_DIALOG:
     case ACTION_EXTRACT_HERE:
     case ACTION_EXTRACT_TO_FOLDER:
     case ACTION_TEST:
     case ACTION_SEP_1:
-    {
-        bool isArchive = SevenZipHelper::GetCachedSelectionInfo(psiItemArray).isArchive;
-        *pCmdState = isArchive ? ECS_ENABLED : ECS_HIDDEN;
+        // All remaining subcommands read the cached result with ZERO COM calls
+        *pCmdState = SevenZipHelper::GetLastSelectionInfo().isArchive ? ECS_ENABLED : ECS_HIDDEN;
         return S_OK;
-    }
+
     default:
         *pCmdState = ECS_ENABLED;
         return S_OK;
@@ -321,38 +279,25 @@ IFACEMETHODIMP SevenZipSubCommand::EnumSubCommands(IEnumExplorerCommand** ppEnum
 // ----------------------------------------------------------------------------
 
 SevenZipEnumCommands::SevenZipEnumCommands(size_t startIndex)
-    : m_refCount(1), m_currentIndex(startIndex), m_pUnkMarshaler(nullptr)
+    : m_refCount(1), m_currentIndex(startIndex)
 {
     InterlockedIncrement(&g_dllRefCount);
-    CoCreateFreeThreadedMarshaler(static_cast<IEnumExplorerCommand*>(this), &m_pUnkMarshaler);
 }
 
 SevenZipEnumCommands::~SevenZipEnumCommands()
 {
-    if (m_pUnkMarshaler)
-    {
-        m_pUnkMarshaler->Release();
-        m_pUnkMarshaler = nullptr;
-    }
     InterlockedDecrement(&g_dllRefCount);
 }
 
 IFACEMETHODIMP SevenZipEnumCommands::QueryInterface(REFIID riid, void** ppv)
 {
     if (!ppv) return E_POINTER;
-
-    if (IsEqualIID(riid, IID_IEnumExplorerCommand) || IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, __uuidof(IAgileObject)))
+    if (IsEqualIID(riid, IID_IEnumExplorerCommand) || IsEqualIID(riid, IID_IUnknown))
     {
         *ppv = static_cast<IEnumExplorerCommand*>(this);
         AddRef();
         return S_OK;
     }
-
-    if (IsEqualIID(riid, IID_IMarshal) && m_pUnkMarshaler)
-    {
-        return m_pUnkMarshaler->QueryInterface(riid, ppv);
-    }
-
     *ppv = nullptr;
     return E_NOINTERFACE;
 }
@@ -428,50 +373,14 @@ IFACEMETHODIMP SevenZipEnumCommands::Clone(IEnumExplorerCommand** ppEnum)
 // SevenZipRootCommand Implementation
 // ----------------------------------------------------------------------------
 
-SevenZipRootCommand::SevenZipRootCommand()
-    : m_refCount(1), m_pUnkMarshaler(nullptr)
-{
-}
-
-SevenZipRootCommand::~SevenZipRootCommand()
-{
-    if (m_pUnkMarshaler)
-    {
-        m_pUnkMarshaler->Release();
-        m_pUnkMarshaler = nullptr;
-    }
-}
-
 IFACEMETHODIMP SevenZipRootCommand::QueryInterface(REFIID riid, void** ppv)
 {
     if (!ppv) return E_POINTER;
-
-    if (IsEqualIID(riid, IID_IExplorerCommand) || IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, __uuidof(IAgileObject)))
+    if (IsEqualIID(riid, IID_IExplorerCommand) || IsEqualIID(riid, IID_IUnknown))
     {
         *ppv = static_cast<IExplorerCommand*>(this);
-        AddRef();
         return S_OK;
     }
-
-    if (IsEqualIID(riid, IID_IMarshal))
-    {
-        if (!m_pUnkMarshaler)
-        {
-            IUnknown* pMarshaler = nullptr;
-            if (SUCCEEDED(CoCreateFreeThreadedMarshaler(static_cast<IExplorerCommand*>(this), &pMarshaler)))
-            {
-                if (InterlockedCompareExchangePointer(reinterpret_cast<PVOID*>(&m_pUnkMarshaler), pMarshaler, nullptr) != nullptr)
-                {
-                    pMarshaler->Release();
-                }
-            }
-        }
-        if (m_pUnkMarshaler)
-        {
-            return m_pUnkMarshaler->QueryInterface(riid, ppv);
-        }
-    }
-
     *ppv = nullptr;
     return E_NOINTERFACE;
 }
@@ -509,16 +418,10 @@ IFACEMETHODIMP SevenZipRootCommand::GetCanonicalName(GUID* pguidCommandName)
     return S_OK;
 }
 
-IFACEMETHODIMP SevenZipRootCommand::GetState(IShellItemArray* psiItemArray, BOOL /*fOkToBeSlow*/, EXPCMDSTATE* pCmdState)
+IFACEMETHODIMP SevenZipRootCommand::GetState(IShellItemArray* /*psiItemArray*/, BOOL /*fOkToBeSlow*/, EXPCMDSTATE* pCmdState)
 {
     if (!pCmdState) return E_POINTER;
-
-    // Single-pass selection probe: inspect item 0 once here so all 16 subcommands do 0 COM calls
-    if (psiItemArray)
-    {
-        SevenZipHelper::UpdateSelectionCache(psiItemArray);
-    }
-
+    // Zero psiItemArray COM calls here so the main right-click menu renders instantaneously without flashing!
     *pCmdState = ECS_ENABLED;
     return S_OK;
 }

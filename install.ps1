@@ -145,14 +145,11 @@ if ($existing) {
 Write-Host "Installing Signed Sparse MSIX with ExternalLocation..." -ForegroundColor Yellow
 Add-AppxPackage -Path "$msixPath" -ExternalLocation "$packageDir"
 
-# 7. Register InProcServer32 in HKCU for zero-latency in-process COM activation
+# 7. Ensure no conflicting unpackaged HKCU CLSID registration exists
 $clsidKey = "HKCU:\Software\Classes\CLSID\{4B5E8908-7211-460B-A512-88F9A64B7C99}"
-$inprocKey = "$clsidKey\InProcServer32"
-New-Item -Path $inprocKey -Force | Out-Null
-Set-ItemProperty -Path $clsidKey -Name "(default)" -Value "7-Zip Modern Context Menu"
-Set-ItemProperty -Path $inprocKey -Name "(default)" -Value $dllPath
-Set-ItemProperty -Path $inprocKey -Name "ThreadingModel" -Value "Both"
-Write-Host "Registered InProcServer32 (ThreadingModel=Both) at: $dllPath" -ForegroundColor Green
+if (Test-Path $clsidKey) {
+    Remove-Item -Path $clsidKey -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 # 8. Verify installation
 $check = Get-AppxPackage -Name "SevenZipContextMenu" -ErrorAction SilentlyContinue
@@ -169,6 +166,14 @@ if ($check) {
     if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
         Start-Process explorer.exe
     }
+
+    # Pre-warm the COM Surrogate (dllhost.exe) so even the very first right-click is instant
+    try {
+        $t = [Type]::GetTypeFromCLSID([Guid]"4B5E8908-7211-460B-A512-88F9A64B7C99")
+        $obj = [Activator]::CreateInstance($t)
+        [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($obj)
+    } catch {}
+
     Write-Host "Explorer restarted! Right-click any file or folder to see 7-Zip in the top-level menu." -ForegroundColor Green
 } else {
     throw "Package installation verification failed."

@@ -28,8 +28,8 @@ enum SevenZipActionType
 class SevenZipSubCommand final : public IExplorerCommand
 {
 public:
-    SevenZipSubCommand(SevenZipActionType action, bool isStaticSingleton = false);
-    ~SevenZipSubCommand();
+    SevenZipSubCommand(SevenZipActionType action);
+    ~SevenZipSubCommand() = default;
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -47,10 +47,7 @@ public:
     IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override;
 
 private:
-    long m_refCount;
     SevenZipActionType m_action;
-    bool m_isStaticSingleton;
-    IUnknown* m_pUnkMarshaler;
 };
 
 class SevenZipEnumCommands final : public IEnumExplorerCommand
@@ -73,14 +70,13 @@ public:
 private:
     long m_refCount;
     size_t m_currentIndex;
-    IUnknown* m_pUnkMarshaler;
 };
 
 class SevenZipRootCommand final : public IExplorerCommand
 {
 public:
-    SevenZipRootCommand();
-    ~SevenZipRootCommand();
+    SevenZipRootCommand() = default;
+    ~SevenZipRootCommand() = default;
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -96,8 +92,4 @@ public:
     IFACEMETHODIMP Invoke(IShellItemArray* psiItemArray, IBindCtx* pbc) override;
     IFACEMETHODIMP GetFlags(EXPCMDFLAGS* pFlags) override;
     IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** ppEnum) override;
-
-private:
-    long m_refCount;
-    IUnknown* m_pUnkMarshaler;
 };

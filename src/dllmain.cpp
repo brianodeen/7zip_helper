@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <objbase.h>
 #include "Guid.h"
 #include "ClassFactory.h"
 #include "SevenZipHelper.h"
@@ -42,6 +43,15 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
     if (IsEqualCLSID(rclsid, CLSID_SevenZipContextMenu))
     {
         static ClassFactory s_factory;
+        static bool s_serverLocked = false;
+        if (!s_serverLocked)
+        {
+            s_serverLocked = true;
+            // Lock the COM surrogate process (dllhost.exe) in memory so it stays warm
+            // in the background instead of shutting down after the context menu closes.
+            CoAddRefServerProcess();
+            CoLockObjectExternal( static_cast<IClassFactory*>(&s_factory), TRUE, FALSE );
+        }
         return s_factory.QueryInterface(riid, ppv);
     }
 

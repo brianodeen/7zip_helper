@@ -18,10 +18,7 @@ namespace SevenZipHelper
     static std::wstring s_iconPath;
     static bool s_pathsInitialized = false;
 
-    static SRWLOCK s_selLock = SRWLOCK_INIT;
     static SelectionInfo s_cachedSelection;
-    static ULONGLONG s_lastSelectionTick = 0;
-    static IShellItemArray* s_lastSelectionPtr = nullptr;
 
     // Fast file existence check using GetFileAttributesW
     static inline bool FastFileExists(const wchar_t* path) noexcept
@@ -75,7 +72,6 @@ namespace SevenZipHelper
             }
         }
 
-        // Fast check default 64-bit path
         if (FastFileExists(L"C:\\Program Files\\7-Zip\\7zG.exe"))
         {
             return L"C:\\Program Files\\7-Zip";
@@ -112,7 +108,6 @@ namespace SevenZipHelper
             wchar_t dllPath[MAX_PATH] = { 0 };
             if (g_hModule && GetModuleFileNameW(g_hModule, dllPath, MAX_PATH) > 0)
             {
-                // Reference the icon resource embedded directly inside SevenZipContextMenu.dll (already in RAM)
                 s_iconPath = std::wstring(dllPath) + L",-" + std::to_wstring(IDI_SEVENZIP);
             }
             else
@@ -128,7 +123,6 @@ namespace SevenZipHelper
     {
         EnsurePathsInitialized(false);
 
-        AcquireSRWLockExclusive(&s_selLock);
         if (s_cachedSelection.baseName.empty())
         {
             s_cachedSelection.baseName = L"Archive";
@@ -138,7 +132,6 @@ namespace SevenZipHelper
             s_cachedSelection.titleEmail7z = L"Compress to \"Archive.7z\" and email";
             s_cachedSelection.titleEmailZip = L"Compress to \"Archive.zip\" and email";
         }
-        ReleaseSRWLockExclusive(&s_selLock);
     }
 
     void RefreshSevenZipPaths()
@@ -170,7 +163,6 @@ namespace SevenZipHelper
         return s_iconPath;
     }
 
-    // Compile-time 64-bit extension packer (up to 8 ASCII chars after the dot)
     static constexpr uint64_t PackExtConst(const char* str) noexcept
     {
         uint64_t val = 0;
@@ -205,7 +197,6 @@ namespace SevenZipHelper
         size_t lastDot = path.find_last_of(L'.');
         if (lastDot == std::wstring::npos || lastDot + 1 >= path.size()) return false;
 
-        // O(1) compiled jump-table check on the packed 64-bit extension integer
         switch (PackExtRuntime(path.c_str() + lastDot + 1))
         {
         case PackExtConst("7z"):
@@ -277,7 +268,6 @@ namespace SevenZipHelper
             return fileName;
         }
 
-        // Check compound extensions (.tar.gz, .tar.bz2, .tar.xz, .tar.z)
         if (lastDot > 4)
         {
             size_t prevDot = fileName.find_last_of(L'.', lastDot - 1);
@@ -307,11 +297,14 @@ namespace SevenZipHelper
         return path.substr(0, lastSlash);
     }
 
-    static void PopulateSelectionInfo(IShellItemArray* psiItemArray, SelectionInfo& info)
+    const SelectionInfo& UpdateSelectionCache(IShellItemArray* psiItemArray)
     {
-        info = SelectionInfo{};
+        s_cachedSelection.count = 0;
+        s_cachedSelection.isArchive = false;
+        s_cachedSelection.firstItemPath.clear();
+        s_cachedSelection.baseName.clear();
 
-        if (psiItemArray && SUCCEEDED(psiItemArray->GetCount(&info.count)) && info.count > 0)
+        if (psiItemArray && SUCCEEDED(psiItemArray->GetCount(&s_cachedSelection.count)) && s_cachedSelection.count > 0)
         {
             IShellItem* pItem = nullptr;
             if (SUCCEEDED(psiItemArray->GetItemAt(0, &pItem)) && pItem)
@@ -319,77 +312,44 @@ namespace SevenZipHelper
                 LPWSTR pszPath = nullptr;
                 if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath)) && pszPath)
                 {
-                    info.firstItemPath = pszPath;
+                    s_cachedSelection.firstItemPath = pszPath;
                     CoTaskMemFree(pszPath);
                 }
                 pItem->Release();
             }
         }
 
-        if (!info.firstItemPath.empty())
+        if (!s_cachedSelection.firstItemPath.empty())
         {
-            info.isArchive = IsArchiveFile(info.firstItemPath);
-            if (info.count == 1)
+            s_cachedSelection.isArchive = IsArchiveFile(s_cachedSelection.firstItemPath);
+            if (s_cachedSelection.count == 1)
             {
-                info.baseName = GetFileNameWithoutExtension(info.firstItemPath);
+                s_cachedSelection.baseName = GetFileNameWithoutExtension(s_cachedSelection.firstItemPath);
             }
             else
             {
-                std::wstring parentDir = GetParentDirectory(info.firstItemPath);
-                info.baseName = GetFileName(parentDir);
+                std::wstring parentDir = GetParentDirectory(s_cachedSelection.firstItemPath);
+                s_cachedSelection.baseName = GetFileName(parentDir);
             }
         }
 
-        if (info.baseName.empty())
+        if (s_cachedSelection.baseName.empty())
         {
-            info.baseName = L"Archive";
+            s_cachedSelection.baseName = L"Archive";
         }
 
-        info.titleExtractTo = L"Extract to \"" + info.baseName + L"\\\"";
-        info.titleAdd7z     = L"Add to \"" + info.baseName + L".7z\"";
-        info.titleAddZip    = L"Add to \"" + info.baseName + L".zip\"";
-        info.titleEmail7z   = L"Compress to \"" + info.baseName + L".7z\" and email";
-        info.titleEmailZip   = L"Compress to \"" + info.baseName + L".zip\" and email";
+        s_cachedSelection.titleExtractTo = L"Extract to \"" + s_cachedSelection.baseName + L"\\\"";
+        s_cachedSelection.titleAdd7z     = L"Add to \"" + s_cachedSelection.baseName + L".7z\"";
+        s_cachedSelection.titleAddZip    = L"Add to \"" + s_cachedSelection.baseName + L".zip\"";
+        s_cachedSelection.titleEmail7z   = L"Compress to \"" + s_cachedSelection.baseName + L".7z\" and email";
+        s_cachedSelection.titleEmailZip   = L"Compress to \"" + s_cachedSelection.baseName + L".zip\" and email";
+
+        return s_cachedSelection;
     }
 
-    void UpdateSelectionCache(IShellItemArray* psiItemArray)
+    const SelectionInfo& GetLastSelectionInfo() noexcept
     {
-        if (!psiItemArray) return;
-
-        SelectionInfo freshInfo;
-        PopulateSelectionInfo(psiItemArray, freshInfo);
-
-        AcquireSRWLockExclusive(&s_selLock);
-        s_cachedSelection = std::move(freshInfo);
-        s_lastSelectionPtr = psiItemArray;
-        s_lastSelectionTick = GetTickCount64();
-        ReleaseSRWLockExclusive(&s_selLock);
-    }
-
-    SelectionInfo GetCachedSelectionInfo(IShellItemArray* psiItemArray)
-    {
-        ULONGLONG now = GetTickCount64();
-
-        AcquireSRWLockShared(&s_selLock);
-        // Fast path: if updated by RootCommand::GetState within the last 500ms or matching pointer, return immediately with ZERO COM calls
-        if (s_lastSelectionTick != 0 &&
-            (psiItemArray == nullptr || psiItemArray == s_lastSelectionPtr || (now - s_lastSelectionTick) < 500))
-        {
-            SelectionInfo copy = s_cachedSelection;
-            ReleaseSRWLockShared(&s_selLock);
-            return copy;
-        }
-        ReleaseSRWLockShared(&s_selLock);
-
-        if (psiItemArray)
-        {
-            UpdateSelectionCache(psiItemArray);
-        }
-
-        AcquireSRWLockShared(&s_selLock);
-        SelectionInfo copy = s_cachedSelection;
-        ReleaseSRWLockShared(&s_selLock);
-        return copy;
+        return s_cachedSelection;
     }
 
     std::vector<std::wstring> GetPathsFromShellItemArray(IShellItemArray* psiItemArray)
@@ -510,7 +470,6 @@ namespace SevenZipHelper
             return true;
         }
 
-        // Auto-heal: if 7-Zip was reinstalled to a different drive/folder, re-discover and retry once
         DWORD err = GetLastError();
         if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
         {

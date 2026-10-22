@@ -31,6 +31,15 @@ Write-Host "=================================================" -ForegroundColor 
 Write-Host " Uninstalling 7-Zip Modern Context Menu Extension" -ForegroundColor Cyan
 Write-Host "=================================================" -ForegroundColor Cyan
 
+# Terminate any warm dllhost holding SevenZipContextMenu.dll
+Get-Process dllhost -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+        if ($_.Modules.FileName -match 'SevenZipContextMenu\.dll') {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+
 $pkg = Get-AppxPackage -Name "SevenZipContextMenu" -AllUsers -ErrorAction SilentlyContinue
 
 if ($pkg) {

@@ -6,9 +6,9 @@
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
   xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
-  xmlns:com4="http://schemas.microsoft.com/appx/manifest/com/windows10/4"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap10 desktop desktop4 desktop5 com4 rescap">
+  IgnorableNamespaces="uap uap10 desktop desktop4 desktop5 com rescap">
 
   <Identity
     Name="SevenZipContextMenu"
@@ -48,16 +48,13 @@
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />
       <Extensions>
-        <com4:Extension Category="windows.comServer">
-          <com4:ComServer>
-            <com4:InProcessServer Path="SevenZipContextMenu.dll">
-              <com4:Class Id="4B5E8908-7211-460B-A512-88F9A64B7C99" ThreadingModel="Both" />
-            </com4:InProcessServer>
-            <com4:SurrogateServer DisplayName="7-Zip Modern Context Menu">
-              <com4:InProcessServerClassReference Id="4B5E8908-7211-460B-A512-88F9A64B7C99" />
-            </com4:SurrogateServer>
-          </com4:ComServer>
-        </com4:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="7-Zip Modern Context Menu">
+              <com:Class Id="4B5E8908-7211-460B-A512-88F9A64B7C99" Path="SevenZipContextMenu.dll" ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
         <desktop4:Extension Category="windows.fileExplorerContextMenus">
           <desktop4:FileExplorerContextMenus>
             <desktop5:ItemType Type="*">
